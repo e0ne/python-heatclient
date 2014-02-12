@@ -57,6 +57,7 @@ class HTTPClient(object):
         self.password = kwargs.get('password')
         self.region_name = kwargs.get('region_name')
         self.connection_params = self.get_connection_params(endpoint, **kwargs)
+        self.proxy_url = self.get_proxy_url()
 
     @staticmethod
     def get_connection_params(endpoint, **kwargs):
@@ -82,8 +83,13 @@ class HTTPClient(object):
     def get_connection(self):
         _class = self.connection_params[0]
         try:
-            return _class(*self.connection_params[1][0:2],
-                          **self.connection_params[2])
+            if self.proxy_url:
+                proxy_parts = urlutils.urlparse(self.proxy_url)
+                return _class(proxy_parts.hostname, proxy_parts.port,
+                              **self.connection_params[2])
+            else:
+                return _class(*self.connection_params[1][0:2],
+                              **self.connection_params[2])
         except httplib.InvalidURL:
             raise exc.InvalidEndpoint()
 
@@ -146,7 +152,10 @@ class HTTPClient(object):
 
         try:
             conn_params = self.connection_params[1][2]
-            conn_url = os.path.normpath('%s/%s' % (conn_params, url))
+            if self.proxy_url:
+                conn_url = self.endpoint + url
+            else:
+                conn_url = os.path.normpath('%s/%s' % (conn_params, url))
             conn.request(method, conn_url, **kwargs)
             resp = conn.getresponse()
         except socket.gaierror as e:
@@ -182,6 +191,15 @@ class HTTPClient(object):
             raise exc.from_response(resp, body_str)
 
         return resp, body_str
+
+    def get_proxy_url(self):
+        scheme = urlutils.urlparse(self.endpoint).scheme
+        if scheme == 'https':
+            return os.environ.get('https_proxy')
+        elif scheme == 'http':
+            return os.environ.get('http_proxy')
+        msg = 'Unsupported scheme: %s' % scheme
+        raise exc.InvalidEndpoint(msg)
 
     def credentials_headers(self):
         creds = {}
